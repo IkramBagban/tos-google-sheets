@@ -1,3 +1,5 @@
+import { useEffect, useMemo, useState } from 'react'
+import { proxy } from '@telemetryos/sdk'
 import {
   SettingsContainer,
   SettingsError,
@@ -15,14 +17,17 @@ import {
   useBackgroundOpacityStoreState,
   useBackgroundTypeStoreState,
   useCellRangeStoreState,
+  useGoogleSheetsPublishedValidStoreState,
   useGoogleSheetsUrlStoreState,
   useRefreshIntervalMinutesStoreState,
   useUiScaleStoreState,
 } from '../hooks/store'
+import { buildGoogleSheetsEmbedUrl, isLikelyUnpublishedOrRestrictedHtml, parseGoogleSheetsUrl } from '../utils/googleSheets'
 
 const DEFAULT_REFRESH_MINUTES = 15
 const MIN_REFRESH_MINUTES = 5
 const MAX_REFRESH_MINUTES = 1440
+const SETTINGS_VALIDATION_DEBOUNCE_MS = 600
 
 function isValidGoogleSheetsInputUrl(value: string): boolean {
   const trimmed = value.trim()
@@ -68,6 +73,7 @@ export function Settings() {
   const [isLoadingUrl, googleSheetsUrl, setGoogleSheetsUrl] = useGoogleSheetsUrlStoreState(250)
   const [isLoadingRange, cellRange, setCellRange] = useCellRangeStoreState(250)
   const [isLoadingRefresh, refreshIntervalMinutes, setRefreshIntervalMinutes] = useRefreshIntervalMinutesStoreState(250)
+  const [isLoadingPublishedValid, isPublishedValid, setIsPublishedValid] = useGoogleSheetsPublishedValidStoreState(5)
 
   const [isLoadingBackgroundType, backgroundType, setBackgroundType] = useBackgroundTypeStoreState()
   const [isLoadingBackgroundColor, backgroundColor, setBackgroundColor] = useBackgroundColorStoreState(5)
@@ -78,6 +84,7 @@ export function Settings() {
     isLoadingUrl ||
     isLoadingRange ||
     isLoadingRefresh ||
+    isLoadingPublishedValid ||
     isLoadingBackgroundType ||
     isLoadingBackgroundColor ||
     isLoadingBackgroundOpacity
@@ -86,6 +93,68 @@ export function Settings() {
     ? null
     : 'Enter a valid Google Sheets URL with /spreadsheets/d/{id} or a published /spreadsheets/d/e/{id}/pubhtml link.'
   const refreshError = getRefreshInputError(refreshIntervalMinutes)
+  const [publishValidationStatus, setPublishValidationStatus] = useState<'idle' | 'checking' | 'valid' | 'invalid'>('idle')
+  const [publishValidationError, setPublishValidationError] = useState<string | null>(null)
+
+  const parsedSheet = useMemo(() => parseGoogleSheetsUrl(googleSheetsUrl), [googleSheetsUrl])
+  const embedValidationUrl = useMemo(() => {
+    if (!parsedSheet) {
+      return null
+    }
+
+    return buildGoogleSheetsEmbedUrl(parsedSheet, cellRange)
+  }, [parsedSheet, cellRange])
+
+  useEffect(() => {
+    if (!googleSheetsUrl.trim() || urlError || !embedValidationUrl) {
+      setPublishValidationStatus('idle')
+      setPublishValidationError(null)
+      if (isPublishedValid) {
+        setIsPublishedValid(false)
+      }
+      return
+    }
+
+    let isCancelled = false
+    setPublishValidationStatus('checking')
+    setPublishValidationError(null)
+    if (isPublishedValid) {
+      setIsPublishedValid(false)
+    }
+
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await proxy().fetch(embedValidationUrl)
+        const bodyText = await response.text()
+        const hasInvalidMarker = isLikelyUnpublishedOrRestrictedHtml(bodyText)
+        const hasEmbeddableHtml = bodyText.trim().length > 0
+
+        if (!isCancelled) {
+          if (hasInvalidMarker) {
+            setPublishValidationStatus('invalid')
+            setPublishValidationError('This URL is shared but not web-published (or still restricted). In Google Sheets use File → Share → Publish to web, then use that published sheet.')
+          } else if (response.ok || hasEmbeddableHtml) {
+            setPublishValidationStatus('valid')
+            setPublishValidationError(null)
+            setIsPublishedValid(true)
+          } else {
+            setPublishValidationStatus('invalid')
+            setPublishValidationError('This sheet could not be validated as web-published. Public sharing alone is not enough for signage embedding.')
+          }
+        }
+      } catch {
+        if (!isCancelled) {
+          setPublishValidationStatus('invalid')
+          setPublishValidationError('Unable to validate sheet accessibility right now. Check network access and publish status.')
+        }
+      }
+    }, SETTINGS_VALIDATION_DEBOUNCE_MS)
+
+    return () => {
+      isCancelled = true
+      window.clearTimeout(timeoutId)
+    }
+  }, [googleSheetsUrl, urlError, embedValidationUrl])
 
   return (
     <SettingsContainer>
@@ -107,6 +176,15 @@ export function Settings() {
             Publish the sheet to web in Google Sheets, then paste any sheet URL. If a tab is selected, its `gid` is used.
           </SettingsHint>
           {urlError && <SettingsError>{urlError}</SettingsError>}
+          {!urlError && publishValidationStatus === 'checking' && (
+            <SettingsHint>Checking whether this sheet is publicly published…</SettingsHint>
+          )}
+          {!urlError && publishValidationStatus === 'valid' && (
+            <SettingsHint>Published sheet confirmed and ready to display.</SettingsHint>
+          )}
+          {!urlError && publishValidationStatus === 'invalid' && publishValidationError && (
+            <SettingsError>{publishValidationError}</SettingsError>
+          )}
         </SettingsField>
 
         <SettingsField>

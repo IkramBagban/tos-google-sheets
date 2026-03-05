@@ -10,6 +10,8 @@ export const useCellRangeStoreState = createUseInstanceStoreState<string>('googl
 
 export const useRefreshIntervalMinutesStoreState = createUseInstanceStoreState<string>('google-sheets-refresh-minutes', '15')
 
+export const useGoogleSheetsPublishedValidStoreState = createUseInstanceStoreState<boolean>('google-sheets-published-valid', false)
+
 export const useBackgroundTypeStoreState = createUseInstanceStoreState<BackgroundType>('background-type', 'default')
 
 export const useBackgroundColorStoreState = createUseInstanceStoreState<string>('background-color', '#000000')

@@ -143,6 +143,7 @@ export function Render() {
           className="sheets-frame sheets-frame--active"
           src={activeFrame.src}
           title="Google Sheets"
+          scrolling="no"
           loading="eager"
           referrerPolicy="no-referrer-when-downgrade"
         />
@@ -154,6 +155,7 @@ export function Render() {
           className="sheets-frame sheets-frame--pending"
           src={pendingFrame.src}
           title="Google Sheets loading"
+          scrolling="no"
           loading="eager"
           referrerPolicy="no-referrer-when-downgrade"
           onLoad={() => {

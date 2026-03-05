@@ -10,11 +10,14 @@
 
 .sheets-frame {
   position: absolute;
-  inset: 3rem;
+  top: 3rem;
+  left: 3rem;
   width: calc(100% - 6rem);
-  height: calc(100% - 6rem);
+  height: calc(100% - 4.75rem);
   border: 0;
   background: transparent;
+  overflow: hidden;
+  clip-path: inset(0 0 1.25rem 0);
 }
 
 .sheets-frame--active {

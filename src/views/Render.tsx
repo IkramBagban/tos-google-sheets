@@ -1,172 +1,285 @@
-/**
- * Render view — the display content shown on physical signage devices.
- *
- * This template provides the shared scaffolding that every app needs:
- *   - Theme system (8 themes with CSS custom properties)
- *   - Responsive density tiers (full / comfortable / compact / minimal)
- *   - Entrance animations (14 presets)
- *   - Page padding and UI scale controls
- *   - Background toggle (gradient or transparent for layering)
- *   - Portrait/landscape detection
- *
- * Layout building blocks (CSS classes with entrance animation support):
- *   .content-header   — top-level header bar (title + subtitle)
- *   .content-card     — primary hero card with gradient background
- *   .detail-grid      — grid container for detail cards
- *   .detail-card      — small info cards (icon + value + label)
- *   .content-section  — secondary section (footer bar, list, etc.)
- *
- * To build your app:
- *   1. Add store hooks in hooks/store.ts and import them here.
- *   2. Add their isLoading flags to `isStoreLoading`.
- *   3. Replace the welcome content below with your layout using the classes above.
- *   4. Use `density` and `isPortrait` to adapt your layout to available space.
- */
-
-import { useUiScaleToSetRem, useUiAspectRatio } from '@telemetryos/sdk/react'
+import { useEffect, useMemo, useState } from 'react'
+import { proxy } from '@telemetryos/sdk'
+import { useUiScaleToSetRem } from '@telemetryos/sdk/react'
 import {
-  useThemeStoreState,
+  useBackgroundColorStoreState,
+  useBackgroundOpacityStoreState,
+  useBackgroundTypeStoreState,
+  useCellRangeStoreState,
+  useGoogleSheetsUrlStoreState,
+  useRefreshIntervalMinutesStoreState,
   useUiScaleStoreState,
-  usePagePaddingStoreState,
-  useAnimationStoreState,
-  useShowBackgroundStoreState,
-  useSubtitleStoreState,
 } from '../hooks/store'
-import { themes, type ThemeName, type Theme } from '../themes'
 import './Render.css'
 
-/** Maps a Theme's color tokens to CSS custom properties consumed by Render.css. */
-function applyThemeVars(theme: Theme) {
-  const c = theme.colors
-  return {
-    '--bg-start': c.bgStart,
-    '--bg-mid': c.bgMid,
-    '--bg-end': c.bgEnd,
-    '--card-start': c.cardStart,
-    '--card-mid1': c.cardMid1,
-    '--card-mid2': c.cardMid2,
-    '--card-end': c.cardEnd,
-    '--card-shadow': c.cardShadow,
-    '--primary': c.primary,
-    '--secondary': c.secondary,
-    '--muted': c.muted,
-    '--accent': c.accent,
-    '--card-bg': c.cardBg,
-    '--card-border': c.cardBorder,
-    '--status-good': c.statusGood,
-    '--font-family': theme.fontFamily,
-  } as React.CSSProperties
+const DEFAULT_REFRESH_MINUTES = 15
+const MIN_REFRESH_MINUTES = 5
+const MAX_REFRESH_MINUTES = 1440
+
+interface ParsedSheet {
+  embedBaseUrl: string
+  gid: string
 }
 
-/**
- * Density tiers control spacing, font sizes, and which elements are visible.
- * Determined by UI scale combined with aspect ratio (portrait needs more room).
- */
-type Density = 'full' | 'comfortable' | 'compact' | 'minimal'
+interface FramePayload {
+  id: number
+  src: string
+}
 
-function getDensity(uiScale: number, aspectRatio: number): Density {
-  const isPortrait = aspectRatio < 1
-  const pressure = uiScale * (isPortrait ? 1.2 : 1)
-  if (pressure < 1.4) return 'full'
-  if (pressure < 1.8) return 'comfortable'
-  if (pressure < 2.3) return 'compact'
-  return 'minimal'
+function parseGoogleSheetsUrl(rawUrl: string): ParsedSheet | null {
+  const trimmed = rawUrl.trim()
+  if (!trimmed) {
+    return null
+  }
+
+  let parsedUrl: URL
+  try {
+    parsedUrl = new URL(trimmed)
+  } catch {
+    return null
+  }
+
+  const standardSpreadsheetMatch = parsedUrl.pathname.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/)
+  const publishedSpreadsheetMatch = parsedUrl.pathname.match(/\/spreadsheets\/d\/e\/([a-zA-Z0-9-_]+)\/pubhtml/)
+
+  let embedBaseUrl: string | null = null
+  if (publishedSpreadsheetMatch) {
+    embedBaseUrl = `https://docs.google.com/spreadsheets/d/e/${publishedSpreadsheetMatch[1]}/pubhtml`
+  } else if (standardSpreadsheetMatch) {
+    embedBaseUrl = `https://docs.google.com/spreadsheets/d/${standardSpreadsheetMatch[1]}/pubhtml`
+  }
+
+  if (!embedBaseUrl) {
+    return null
+  }
+  const gidFromQuery = parsedUrl.searchParams.get('gid')
+
+  let gidFromHash: string | null = null
+  if (parsedUrl.hash) {
+    const hashParams = new URLSearchParams(parsedUrl.hash.replace(/^#/, ''))
+    gidFromHash = hashParams.get('gid')
+  }
+
+  const rawGid = gidFromQuery ?? gidFromHash ?? '0'
+  const parsedGid = Number(rawGid)
+  const gid = Number.isInteger(parsedGid) && parsedGid >= 0 ? String(parsedGid) : '0'
+
+  return { embedBaseUrl, gid }
+}
+
+function parseRefreshMinutes(value: string): number {
+  const parsed = Number(value.trim())
+  if (!Number.isFinite(parsed)) {
+    return DEFAULT_REFRESH_MINUTES
+  }
+
+  return Math.min(MAX_REFRESH_MINUTES, Math.max(MIN_REFRESH_MINUTES, parsed))
+}
+
+function buildEmbedUrl(parsedSheet: ParsedSheet, range: string): string {
+  const embedUrl = new URL(parsedSheet.embedBaseUrl)
+  embedUrl.searchParams.set('gid', parsedSheet.gid)
+
+  const trimmedRange = range.trim()
+  if (trimmedRange) {
+    embedUrl.searchParams.set('range', trimmedRange)
+  }
+
+  embedUrl.searchParams.set('widget', 'false')
+  embedUrl.searchParams.set('headers', 'false')
+  embedUrl.searchParams.set('chrome', 'false')
+
+  return embedUrl.toString()
+}
+
+function hexToRgba(hexColor: string, opacityPercent: number): string {
+  const normalized = hexColor.replace('#', '')
+  const isShortHex = normalized.length === 3
+  const fullHex = isShortHex
+    ? normalized
+      .split('')
+      .map((char) => `${char}${char}`)
+      .join('')
+    : normalized
+
+  if (!/^[0-9a-fA-F]{6}$/.test(fullHex)) {
+    return 'rgba(0, 0, 0, 1)'
+  }
+
+  const red = Number.parseInt(fullHex.slice(0, 2), 16)
+  const green = Number.parseInt(fullHex.slice(2, 4), 16)
+  const blue = Number.parseInt(fullHex.slice(4, 6), 16)
+  const alpha = Math.min(100, Math.max(0, opacityPercent)) / 100
+
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`
 }
 
 export function Render() {
-  // ── Store state ──────────────────────────────────────────────────────────
   const [isLoadingScale, uiScale] = useUiScaleStoreState()
-  const [isLoadingPadding, pagePadding] = usePagePaddingStoreState()
-  const [isLoadingTheme, themeName] = useThemeStoreState()
-  const [isLoadingAnim, animation] = useAnimationStoreState()
-  const [isLoadingBg, showBackground] = useShowBackgroundStoreState()
-  const [isLoadingSubtitle, subtitle] = useSubtitleStoreState()
-  const aspectRatio = useUiAspectRatio()
+  const [isLoadingUrl, googleSheetsUrl] = useGoogleSheetsUrlStoreState()
+  const [isLoadingRange, cellRange] = useCellRangeStoreState()
+  const [isLoadingRefresh, refreshIntervalMinutes] = useRefreshIntervalMinutesStoreState()
+  const [isLoadingBackgroundType, backgroundType] = useBackgroundTypeStoreState()
+  const [isLoadingBackgroundColor, backgroundColor] = useBackgroundColorStoreState()
+  const [isLoadingBackgroundOpacity, backgroundOpacity] = useBackgroundOpacityStoreState()
 
-  // Drives rem scaling: html font-size = base * uiScale
   useUiScaleToSetRem(uiScale)
 
-  // ── Loading gate — render nothing until all store values are available ───
-  const isStoreLoading = isLoadingScale || isLoadingPadding || isLoadingTheme || isLoadingAnim || isLoadingBg || isLoadingSubtitle
-  if (isStoreLoading) return null
+  const isStoreLoading =
+    isLoadingScale ||
+    isLoadingUrl ||
+    isLoadingRange ||
+    isLoadingRefresh ||
+    isLoadingBackgroundType ||
+    isLoadingBackgroundColor ||
+    isLoadingBackgroundOpacity
 
-  // ── Derived layout state ─────────────────────────────────────────────────
-  const resolvedName = (Object.prototype.hasOwnProperty.call(themes, themeName) ? themeName : 'telemetryos') as ThemeName
-  const theme = themes[resolvedName]
-  const isPortrait = aspectRatio < 1
-  const density = getDensity(uiScale, aspectRatio)
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine)
+  const [isValidatingEmbed, setIsValidatingEmbed] = useState<boolean>(false)
+  const [isEmbedValid, setIsEmbedValid] = useState<boolean>(false)
+  const [activeFrame, setActiveFrame] = useState<FramePayload | null>(null)
+  const [pendingFrame, setPendingFrame] = useState<FramePayload | null>(null)
 
-  // Themes that need special CSS overlays register their modifier class here.
-  const themeModifier: Record<string, string> = {
-    'telemetryos': 'render--telemetryos',
-    'neon-pulse': 'render--neon-pulse',
-    'solar-flare': 'render--solar-flare',
-    'emerald-matrix': 'render--emerald-matrix',
-    'arctic-aurora': 'render--arctic-aurora',
-    'the-matrix': 'render--the-matrix',
-    'plain-light': 'render--plain',
-    'plain-dark': 'render--plain',
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true)
+    const handleOffline = () => setIsOnline(false)
+
+    window.addEventListener('online', handleOnline)
+    window.addEventListener('offline', handleOffline)
+
+    return () => {
+      window.removeEventListener('online', handleOnline)
+      window.removeEventListener('offline', handleOffline)
+    }
+  }, [])
+
+  const parsedSheet = useMemo(() => parseGoogleSheetsUrl(googleSheetsUrl), [googleSheetsUrl])
+  const embedUrl = useMemo(() => {
+    if (!parsedSheet) {
+      return null
+    }
+
+    return buildEmbedUrl(parsedSheet, cellRange)
+  }, [parsedSheet, cellRange])
+
+  const refreshMinutes = useMemo(() => parseRefreshMinutes(refreshIntervalMinutes), [refreshIntervalMinutes])
+
+  useEffect(() => {
+    if (!embedUrl || !isOnline) {
+      setIsValidatingEmbed(false)
+      setIsEmbedValid(false)
+      return
+    }
+
+    let isCancelled = false
+    setIsValidatingEmbed(true)
+    setIsEmbedValid(false)
+
+    const validatePublishedSheet = async () => {
+      try {
+        const response = await proxy().fetch(embedUrl)
+        if (!response.ok) {
+          if (!isCancelled) {
+            setIsEmbedValid(false)
+          }
+          return
+        }
+
+        // Cross-origin iframe content is not readable, so use an HTML marker heuristic via proxy.
+        const bodyText = (await response.text()).toLowerCase()
+        const invalidMarkers = [
+          'accounts.google.com',
+          'sign in',
+          'request access',
+          'you need permission',
+          'unable to open file',
+        ]
+
+        const hasInvalidMarker = invalidMarkers.some((marker) => bodyText.includes(marker))
+        if (!isCancelled) {
+          setIsEmbedValid(!hasInvalidMarker)
+        }
+      } catch {
+        if (!isCancelled) {
+          setIsEmbedValid(false)
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsValidatingEmbed(false)
+        }
+      }
+    }
+
+    validatePublishedSheet()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [embedUrl, isOnline])
+
+  useEffect(() => {
+    if (!embedUrl || !isOnline || isValidatingEmbed || !isEmbedValid) {
+      setActiveFrame(null)
+      setPendingFrame(null)
+      return
+    }
+
+    setActiveFrame(null)
+    setPendingFrame({ id: Date.now(), src: embedUrl })
+  }, [embedUrl, isOnline, isValidatingEmbed, isEmbedValid])
+
+  useEffect(() => {
+    if (!embedUrl || !isOnline || isValidatingEmbed || !isEmbedValid) {
+      return
+    }
+
+    const intervalId = window.setInterval(() => {
+      setPendingFrame({ id: Date.now(), src: embedUrl })
+    }, refreshMinutes * 60 * 1000)
+
+    return () => window.clearInterval(intervalId)
+  }, [embedUrl, isOnline, refreshMinutes, isValidatingEmbed, isEmbedValid])
+
+  if (isStoreLoading || !isOnline || !embedUrl || isValidatingEmbed || !isEmbedValid) {
+    return null
   }
 
-  const animClass = `anim--${animation}`
-  const layoutClasses = [
-    'render',
-    themeModifier[resolvedName] ?? '',
-    isPortrait ? 'render--portrait' : '',
-    `render--${density}`,
-    animClass,
-    showBackground ? '' : 'render--no-bg',
-  ].filter(Boolean).join(' ')
+  const backgroundStyle =
+    backgroundType === 'solid'
+      ? hexToRgba(backgroundColor, backgroundOpacity)
+      : `rgba(0, 0, 0, ${Math.min(100, Math.max(0, backgroundOpacity)) / 100})`
 
-  // ── Render ───────────────────────────────────────────────────────────────
   return (
-    <div key={animation} className={layoutClasses} style={{ ...applyThemeVars(theme), '--page-padding': pagePadding } as React.CSSProperties}>
-      {/* Theme-specific background effects */}
-      {showBackground && resolvedName === 'telemetryos' && <div className="tos-sweep" />}
-      {showBackground && resolvedName === 'neon-pulse' && (
-        <div className="neon-pulse-bg">
-          <div className="neon-pulse-bg__orb" />
-          <div className="neon-pulse-bg__orb" />
-          <div className="neon-pulse-bg__orb" />
-        </div>
+    <div className="render" style={{ backgroundColor: backgroundStyle }}>
+      {activeFrame && (
+        <iframe
+          key={`active-${activeFrame.id}`}
+          className="sheets-frame sheets-frame--active"
+          src={activeFrame.src}
+          title="Google Sheets"
+          loading="eager"
+          referrerPolicy="no-referrer-when-downgrade"
+        />
       )}
-      {showBackground && resolvedName === 'solar-flare' && <div className="solar-flare-bg" />}
-      {showBackground && resolvedName === 'arctic-aurora' && <div className="arctic-aurora-bg" />}
-      {showBackground && resolvedName === 'the-matrix' && <div className="matrix-scanlines" />}
 
-      {/* ── Welcome content (replace with your app) ─────────────────────── */}
-
-      <img src={resolvedName === 'plain-light' ? '/assets/telemetryos-wordmark-dark.svg' : '/assets/telemetryos-wordmark.svg'} alt="TelemetryOS" className="render__logo" />
-
-      <div className="render__hero">
-        {density !== 'minimal' && (
-          <div className="render__hero-title">Welcome to TelemetryOS SDK</div>
-        )}
-        <div className="render__hero-subtitle">{subtitle}</div>
-      </div>
-
-      <div className="render__docs-information">
-        {density === 'full' && (
-          <>
-            <div className="render__docs-information-title">
-              To get started, edit the Render.tsx and Settings.tsx files
-            </div>
-            <div className="render__docs-information-text">
-              Visit our documentation on building applications to learn more
-            </div>
-          </>
-        )}
-        {(density === 'full' || density === 'comfortable') && (
-          <a
-            className="render__docs-information-button"
-            href="https://docs.telemetryos.com/docs/sdk-getting-started"
-            target="_blank"
-            rel="noreferrer"
-          >
-            Documentation
-          </a>
-        )}
-      </div>
+      {pendingFrame && (
+        <iframe
+          key={`pending-${pendingFrame.id}`}
+          className="sheets-frame sheets-frame--pending"
+          src={pendingFrame.src}
+          title="Google Sheets loading"
+          loading="eager"
+          referrerPolicy="no-referrer-when-downgrade"
+          onLoad={() => {
+            setActiveFrame(pendingFrame)
+            setPendingFrame(null)
+          }}
+          onError={() => {
+            setActiveFrame(null)
+            setPendingFrame(null)
+          }}
+        />
+      )}
     </div>
   )
 }

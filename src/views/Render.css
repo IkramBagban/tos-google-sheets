@@ -5,10 +5,8 @@
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+  /* Padding now scales directly with uiScale via rem sizing. */
   padding: 3rem;
-  --viewport-aspect: 1.65;
-  --viewport-radius: 1.4rem;
-  --viewport-shadow: 0 1.6rem 4rem rgba(0, 0, 0, 0.35);
 }
 
 .render__stage {
@@ -16,54 +14,28 @@
   height: 100%;
   min-width: 0;
   min-height: 0;
-  display: grid;
-  place-items: center;
-  container-type: size;
 }
 
 .render__viewport {
   position: relative;
-  width: min(100cqw, calc(100cqh * var(--viewport-aspect)));
-  height: min(100cqh, calc(100cqw / var(--viewport-aspect)));
+  width: 100%;
+  height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  border: 0.12rem solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--viewport-radius);
-  box-shadow: var(--viewport-shadow);
+  border: max(0.12rem, 1px) solid rgba(255, 255, 255, 0.12);
+  border-radius: max(1.4rem, 12px);
+  box-shadow: 0 1.4rem 3.2rem rgba(0, 0, 0, 0.32);
   background: rgba(255, 255, 255, 0.02);
-}
-
-.render--landscape {
-  --viewport-aspect: 1.78;
-}
-
-.render--square {
-  --viewport-aspect: 1.2;
-}
-
-.render--wide {
-  --viewport-aspect: 2.45;
-}
-
-.render--ultra-wide {
-  --viewport-aspect: 3.4;
-}
-
-.render--portrait {
-  --viewport-aspect: 0.9;
-}
-
-.render--ultra-tall {
-  --viewport-aspect: 0.62;
 }
 
 .sheets-frame {
   position: absolute;
-  inset: 0;
-  /* Overscan the iframe slightly so internal browser scrollbars stay clipped. */
-  width: calc(100% + 1.2rem);
-  height: calc(100% + 1.2rem);
+  top: 0;
+  left: 0;
+  /* Overscan to the right/bottom only so header and first column stay visible. */
+  width: calc(100% + 20px);
+  height: calc(100% + 20px);
   border: 0;
   background: transparent;
   overflow: hidden;

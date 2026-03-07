@@ -223,7 +223,7 @@ export function Settings() {
           <SettingsSliderFrame>
             <input
               type="range"
-              min={1}
+              min={0}
               max={3}
               step={0.01}
               disabled={isLoading}

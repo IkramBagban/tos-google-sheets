@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useUiScaleToSetRem } from '@telemetryos/sdk/react'
+import { useUiAspectRatio, useUiScaleToSetRem } from '@telemetryos/sdk/react'
 import {
   useBackgroundColorStoreState,
   useBackgroundOpacityStoreState,
@@ -21,6 +21,14 @@ interface FramePayload {
   id: number
   src: string
 }
+
+type RenderShape =
+  | 'render--landscape'
+  | 'render--square'
+  | 'render--wide'
+  | 'render--ultra-wide'
+  | 'render--portrait'
+  | 'render--ultra-tall'
 
 function parseRefreshMinutes(value: string): number {
   const parsed = Number(value.trim())
@@ -53,6 +61,30 @@ function hexToRgba(hexColor: string, opacityPercent: number): string {
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`
 }
 
+function getRenderShape(aspectRatio: number): RenderShape {
+  if (aspectRatio >= 6) {
+    return 'render--ultra-wide'
+  }
+
+  if (aspectRatio >= 2.2) {
+    return 'render--wide'
+  }
+
+  if (aspectRatio >= 1.15) {
+    return 'render--landscape'
+  }
+
+  if (aspectRatio >= 0.87) {
+    return 'render--square'
+  }
+
+  if (aspectRatio >= 0.4) {
+    return 'render--portrait'
+  }
+
+  return 'render--ultra-tall'
+}
+
 export function Render() {
   const [isLoadingScale, uiScale] = useUiScaleStoreState()
   const [isLoadingUrl, googleSheetsUrl] = useGoogleSheetsUrlStoreState()
@@ -62,6 +94,7 @@ export function Render() {
   const [isLoadingBackgroundType, backgroundType] = useBackgroundTypeStoreState()
   const [isLoadingBackgroundColor, backgroundColor] = useBackgroundColorStoreState()
   const [isLoadingBackgroundOpacity, backgroundOpacity] = useBackgroundOpacityStoreState()
+  const aspectRatio = useUiAspectRatio()
 
   useUiScaleToSetRem(uiScale)
 
@@ -102,6 +135,7 @@ export function Render() {
   }, [parsedSheet, cellRange])
 
   const refreshMinutes = useMemo(() => parseRefreshMinutes(refreshIntervalMinutes), [refreshIntervalMinutes])
+  const renderShape = useMemo(() => getRenderShape(aspectRatio), [aspectRatio])
 
   useEffect(() => {
     if (!embedUrl || !isOnline || !isPublishedValid) {
@@ -136,38 +170,42 @@ export function Render() {
       : `rgba(0, 0, 0, ${Math.min(100, Math.max(0, backgroundOpacity)) / 100})`
 
   return (
-    <div className="render" style={{ backgroundColor: backgroundStyle }}>
-      {activeFrame && (
-        <iframe
-          key={`active-${activeFrame.id}`}
-          className="sheets-frame sheets-frame--active"
-          src={activeFrame.src}
-          title="Google Sheets"
-          scrolling="no"
-          loading="eager"
-          referrerPolicy="no-referrer-when-downgrade"
-        />
-      )}
+    <div className={`render ${renderShape}`} style={{ backgroundColor: backgroundStyle }}>
+      <div className="render__stage">
+        <div className="render__viewport">
+          {activeFrame && (
+            <iframe
+              key={`active-${activeFrame.id}`}
+              className="sheets-frame sheets-frame--active"
+              src={activeFrame.src}
+              title="Google Sheets"
+              scrolling="no"
+              loading="eager"
+              referrerPolicy="no-referrer-when-downgrade"
+            />
+          )}
 
-      {pendingFrame && (
-        <iframe
-          key={`pending-${pendingFrame.id}`}
-          className="sheets-frame sheets-frame--pending"
-          src={pendingFrame.src}
-          title="Google Sheets loading"
-          scrolling="no"
-          loading="eager"
-          referrerPolicy="no-referrer-when-downgrade"
-          onLoad={() => {
-            setActiveFrame(pendingFrame)
-            setPendingFrame(null)
-          }}
-          onError={() => {
-            setActiveFrame(null)
-            setPendingFrame(null)
-          }}
-        />
-      )}
+          {pendingFrame && (
+            <iframe
+              key={`pending-${pendingFrame.id}`}
+              className="sheets-frame sheets-frame--pending"
+              src={pendingFrame.src}
+              title="Google Sheets loading"
+              scrolling="no"
+              loading="eager"
+              referrerPolicy="no-referrer-when-downgrade"
+              onLoad={() => {
+                setActiveFrame(pendingFrame)
+                setPendingFrame(null)
+              }}
+              onError={() => {
+                setActiveFrame(null)
+                setPendingFrame(null)
+              }}
+            />
+          )}
+        </div>
+      </div>
     </div>
   )
 }

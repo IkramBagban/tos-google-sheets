@@ -33,23 +33,10 @@
   position: absolute;
   top: 0;
   left: 0;
-  /* Overscan to the right/bottom only so header and first column stay visible. */
-  width: calc(100% + 20px);
-  height: calc(100% + 20px);
+  width: 100%;
+  height: 100%;
   border: 0;
   background: transparent;
   overflow: hidden;
-  pointer-events: none;
-}
-
-.sheets-frame--active {
-  z-index: 1;
-  opacity: 1;
-  transition: opacity 500ms ease;
-}
-
-.sheets-frame--pending {
-  z-index: 2;
-  opacity: 0;
   pointer-events: none;
 }

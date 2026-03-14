@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useUiScaleToSetRem } from '@telemetryos/sdk/react'
+import { useUiAspectRatio, useUiResponsiveFactors, useUiScaleToSetRem } from '@telemetryos/sdk/react'
 import {
   useBackgroundColorStoreState,
   useBackgroundOpacityStoreState,
@@ -7,29 +7,12 @@ import {
   useCellRangeStoreState,
   useGoogleSheetsPublishedValidStoreState,
   useGoogleSheetsUrlStoreState,
-  useRefreshIntervalMinutesStoreState,
   useUiScaleStoreState,
 } from '../hooks/store'
 import { buildGoogleSheetsEmbedUrl, parseGoogleSheetsUrl } from '../utils/googleSheets'
 import './Render.css'
 
-const DEFAULT_REFRESH_MINUTES = 15
-const MIN_REFRESH_MINUTES = 5
-const MAX_REFRESH_MINUTES = 1440
-
-interface FramePayload {
-  id: number
-  src: string
-}
-
-function parseRefreshMinutes(value: string): number {
-  const parsed = Number(value.trim())
-  if (!Number.isFinite(parsed)) {
-    return DEFAULT_REFRESH_MINUTES
-  }
-
-  return Math.min(MAX_REFRESH_MINUTES, Math.max(MIN_REFRESH_MINUTES, parsed))
-}
+// Constants removed
 
 function hexToRgba(hexColor: string, opacityPercent: number): string {
   const normalized = hexColor.replace('#', '')
@@ -57,7 +40,7 @@ export function Render() {
   const [isLoadingScale, uiScale] = useUiScaleStoreState()
   const [isLoadingUrl, googleSheetsUrl] = useGoogleSheetsUrlStoreState()
   const [isLoadingRange, cellRange] = useCellRangeStoreState()
-  const [isLoadingRefresh, refreshIntervalMinutes] = useRefreshIntervalMinutesStoreState()
+
   const [isLoadingPublishedValid, isPublishedValid] = useGoogleSheetsPublishedValidStoreState()
   const [isLoadingBackgroundType, backgroundType] = useBackgroundTypeStoreState()
   const [isLoadingBackgroundColor, backgroundColor] = useBackgroundColorStoreState()
@@ -65,19 +48,19 @@ export function Render() {
 
   useUiScaleToSetRem(uiScale)
 
+  const uiAspectRatio = useUiAspectRatio()
+  const { uiWidthFactor, uiHeightFactor } = useUiResponsiveFactors(uiScale, uiAspectRatio)
+
   const isStoreLoading =
     isLoadingScale ||
     isLoadingUrl ||
     isLoadingRange ||
-    isLoadingRefresh ||
     isLoadingPublishedValid ||
     isLoadingBackgroundType ||
     isLoadingBackgroundColor ||
     isLoadingBackgroundOpacity
 
   const [isOnline, setIsOnline] = useState<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine)
-  const [activeFrame, setActiveFrame] = useState<FramePayload | null>(null)
-  const [pendingFrame, setPendingFrame] = useState<FramePayload | null>(null)
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true)
@@ -94,37 +77,12 @@ export function Render() {
 
   const parsedSheet = useMemo(() => parseGoogleSheetsUrl(googleSheetsUrl), [googleSheetsUrl])
   const embedUrl = useMemo(() => {
-    if (!parsedSheet) {
+    if (!parsedSheet || !isOnline || !isPublishedValid) {
       return null
     }
 
     return buildGoogleSheetsEmbedUrl(parsedSheet, cellRange)
-  }, [parsedSheet, cellRange])
-
-  const refreshMinutes = useMemo(() => parseRefreshMinutes(refreshIntervalMinutes), [refreshIntervalMinutes])
-
-  useEffect(() => {
-    if (!embedUrl || !isOnline || !isPublishedValid) {
-      setActiveFrame(null)
-      setPendingFrame(null)
-      return
-    }
-
-    setActiveFrame(null)
-    setPendingFrame({ id: Date.now(), src: embedUrl })
-  }, [embedUrl, isOnline, isPublishedValid])
-
-  useEffect(() => {
-    if (!embedUrl || !isOnline || !isPublishedValid) {
-      return
-    }
-
-    const intervalId = window.setInterval(() => {
-      setPendingFrame({ id: Date.now(), src: embedUrl })
-    }, refreshMinutes * 60 * 1000)
-
-    return () => window.clearInterval(intervalId)
-  }, [embedUrl, isOnline, refreshMinutes, isPublishedValid])
+  }, [parsedSheet, cellRange, isOnline, isPublishedValid])
 
   if (isStoreLoading || !isOnline || !embedUrl || !isPublishedValid) {
     return null
@@ -135,41 +93,26 @@ export function Render() {
       ? hexToRgba(backgroundColor, backgroundOpacity)
       : `rgba(0, 0, 0, ${Math.min(100, Math.max(0, backgroundOpacity)) / 100})`
 
+  const NATIVE_ASPECT_RATIO = 16 / 9
+  const isPillarbox = uiAspectRatio > NATIVE_ASPECT_RATIO
+
   return (
     <div className="render" style={{ backgroundColor: backgroundStyle }}>
-      <div className="render__stage">
-        <div className="render__viewport">
-          {activeFrame && (
-            <iframe
-              key={`active-${activeFrame.id}`}
-              className="sheets-frame sheets-frame--active"
-              src={activeFrame.src}
-              title="Google Sheets"
-              scrolling="no"
-              loading="eager"
-              referrerPolicy="no-referrer-when-downgrade"
-            />
-          )}
-
-          {pendingFrame && (
-            <iframe
-              key={`pending-${pendingFrame.id}`}
-              className="sheets-frame sheets-frame--pending"
-              src={pendingFrame.src}
-              title="Google Sheets loading"
-              scrolling="no"
-              loading="eager"
-              referrerPolicy="no-referrer-when-downgrade"
-              onLoad={() => {
-                setActiveFrame(pendingFrame)
-                setPendingFrame(null)
-              }}
-              onError={() => {
-                setActiveFrame(null)
-                setPendingFrame(null)
-              }}
-            />
-          )}
+      <div className="render__stage" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="render__viewport" style={{
+          width: isPillarbox ? `calc(100vh * ${NATIVE_ASPECT_RATIO})` : '100vw',
+          height: isPillarbox ? '100vh' : `calc(100vw / ${NATIVE_ASPECT_RATIO})`,
+          maxWidth: '100vw',
+          maxHeight: '100vh',
+        }}>
+          <iframe
+            className="sheets-frame"
+            src={embedUrl}
+            title="Google Sheets"
+            scrolling="no"
+            loading="eager"
+            referrerPolicy="no-referrer-when-downgrade"
+          />
         </div>
       </div>
     </div>

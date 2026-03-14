@@ -7,12 +7,11 @@ import {
   useCellRangeStoreState,
   useGoogleSheetsPublishedValidStoreState,
   useGoogleSheetsUrlStoreState,
+  useRefreshIntervalMinutesStoreState,
   useUiScaleStoreState,
 } from '../hooks/store'
 import { buildGoogleSheetsEmbedUrl, parseGoogleSheetsUrl } from '../utils/googleSheets'
 import './Render.css'
-
-// Constants removed
 
 function hexToRgba(hexColor: string, opacityPercent: number): string {
   const normalized = hexColor.replace('#', '')
@@ -40,16 +39,18 @@ export function Render() {
   const [isLoadingScale, uiScale] = useUiScaleStoreState()
   const [isLoadingUrl, googleSheetsUrl] = useGoogleSheetsUrlStoreState()
   const [isLoadingRange, cellRange] = useCellRangeStoreState()
-
   const [isLoadingPublishedValid, isPublishedValid] = useGoogleSheetsPublishedValidStoreState()
   const [isLoadingBackgroundType, backgroundType] = useBackgroundTypeStoreState()
   const [isLoadingBackgroundColor, backgroundColor] = useBackgroundColorStoreState()
   const [isLoadingBackgroundOpacity, backgroundOpacity] = useBackgroundOpacityStoreState()
+  const [isLoadingRefresh, refreshMinutes] = useRefreshIntervalMinutesStoreState()
 
   useUiScaleToSetRem(uiScale)
-
   const uiAspectRatio = useUiAspectRatio()
   const { uiWidthFactor, uiHeightFactor } = useUiResponsiveFactors(uiScale, uiAspectRatio)
+
+  const [contentKey, setContentKey] = useState(0)
+  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine)
 
   const isStoreLoading =
     isLoadingScale ||
@@ -58,17 +59,14 @@ export function Render() {
     isLoadingPublishedValid ||
     isLoadingBackgroundType ||
     isLoadingBackgroundColor ||
-    isLoadingBackgroundOpacity
-
-  const [isOnline, setIsOnline] = useState<boolean>(typeof navigator === 'undefined' ? true : navigator.onLine)
+    isLoadingBackgroundOpacity ||
+    isLoadingRefresh
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true)
     const handleOffline = () => setIsOnline(false)
-
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', handleOffline)
-
     return () => {
       window.removeEventListener('online', handleOnline)
       window.removeEventListener('offline', handleOffline)
@@ -77,12 +75,18 @@ export function Render() {
 
   const parsedSheet = useMemo(() => parseGoogleSheetsUrl(googleSheetsUrl), [googleSheetsUrl])
   const embedUrl = useMemo(() => {
-    if (!parsedSheet || !isOnline || !isPublishedValid) {
-      return null
-    }
-
+    if (!parsedSheet || !isOnline || !isPublishedValid) return null
     return buildGoogleSheetsEmbedUrl(parsedSheet, cellRange)
   }, [parsedSheet, cellRange, isOnline, isPublishedValid])
+
+  useEffect(() => {
+    if (isStoreLoading || !embedUrl) return
+    const intervalMs = Math.max(5, Math.min(1440, Number.parseInt(refreshMinutes) || 15)) * 60 * 1000
+    const timer = setInterval(() => {
+      setContentKey((prev) => prev + 1)
+    }, intervalMs)
+    return () => clearInterval(timer)
+  }, [isStoreLoading, refreshMinutes, embedUrl])
 
   if (isStoreLoading || !isOnline || !embedUrl || !isPublishedValid) {
     return null
@@ -93,19 +97,23 @@ export function Render() {
       ? hexToRgba(backgroundColor, backgroundOpacity)
       : `rgba(0, 0, 0, ${Math.min(100, Math.max(0, backgroundOpacity)) / 100})`
 
-  const NATIVE_ASPECT_RATIO = 16 / 9
-  const isPillarbox = uiAspectRatio > NATIVE_ASPECT_RATIO
+  // SCALE TO MAXIMUM SIZE AT NATIVE ASPECT RATIO (16:9)
+  // This implements the requested pillarbox/letterbox behavior.
+  const NATIVE_RATIO = 16 / 9
+  const isPillarbox = uiAspectRatio > NATIVE_RATIO
 
   return (
     <div className="render" style={{ backgroundColor: backgroundStyle }}>
-      <div className="render__stage" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-        <div className="render__viewport" style={{
-          width: isPillarbox ? `calc(100vh * ${NATIVE_ASPECT_RATIO})` : '100vw',
-          height: isPillarbox ? '100vh' : `calc(100vw / ${NATIVE_ASPECT_RATIO})`,
-          maxWidth: '100vw',
-          maxHeight: '100vh',
-        }}>
+      <div className="render__stage">
+        <div
+          className="render__viewport"
+          style={{
+            width: isPillarbox ? `calc(100% * (${NATIVE_RATIO} / ${uiAspectRatio}))` : '100%',
+            height: isPillarbox ? '100%' : `calc(100% * (${uiAspectRatio} / ${NATIVE_RATIO}))`,
+          }}
+        >
           <iframe
+            key={`${embedUrl}-${contentKey}`}
             className="sheets-frame"
             src={embedUrl}
             title="Google Sheets"

@@ -6,6 +6,6 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { configure } from '@telemetryos/sdk'
 
-configure()
+configure('google-sheets')
 
 createRoot(document.querySelector('#app')!).render(<App />)

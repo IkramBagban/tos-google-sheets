@@ -21,9 +21,9 @@ app_name: "google-sheets"
 developer: "Ikram Bagban"
 stage_1_date: "2026-03-05"        # YYYY-MM-DD
 stage_1_hours: 2        #(stage 1 only)
-stage_2_date: ""        # YYYY-MM-DD
-stage_2_hours: 0        #(stage 2 only)
-total_hours: 0        #total (stage 1 + stage 2)
+stage_2_date: "2026-03-13"        # YYYY-MM-DD
+stage_2_hours: 3        #(stage 2 only)
+total_hours: 5        #total (stage 1 + stage 2)
 complexity: "simple"          # simple | moderate | complex
 
 # Overall Ratings (1-5, where 1 = Poor, 5 = Excellent)
@@ -63,5 +63,5 @@ top_improvements:
   - "In build docs, explain template differences (`Vite + React + TypeScript` vs `Vite + React + TypeScript + Web`) and provide a quick decision guide for which one to pick."
 
 # Additional Comments (optional)
-comments: "Stage 1 implementation and standards alignment are complete in code"
+comments: ""
 ```
